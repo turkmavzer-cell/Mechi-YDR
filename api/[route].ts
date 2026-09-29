@@ -174,7 +174,7 @@ Return ONLY the 'id' of the best matching language. Do not provide any explanati
 };
 
 // GEÇİCİ teşhis: modelleri ve düşünme ayarlarını aynı cümleyle yarıştırır
-const diag = async (): Promise<RouteResult> => {
+const diag = async (body: any): Promise<RouteResult> => {
   const ai = getGenAI();
   const names: string[] = [];
   try {
@@ -185,12 +185,15 @@ const diag = async (): Promise<RouteResult> => {
   } catch (e: any) {
     names.push(`list-error: ${e?.message}`);
   }
-  const candidates = Array.from(new Set([...MODELS, ...names.filter((n) => !/image|tts|audio|live|preview-0|exp/i.test(n))])).slice(0, 8);
-  const configs: Record<string, any> = {
+  const candidates: string[] = body?.models?.length ? body.models : Array.from(new Set([...MODELS, ...names.filter((n) => !/image|tts|audio|live|preview-0|exp/i.test(n))])).slice(0, 8);
+  const allConfigs: Record<string, any> = {
     default: {},
     minimal: { thinkingConfig: { thinkingLevel: "MINIMAL" } },
     budget0: { thinkingConfig: { thinkingBudget: 0 } },
   };
+  const configs: Record<string, any> = body?.configs?.length
+    ? Object.fromEntries(body.configs.map((c: string) => [c, allConfigs[c]]))
+    : allConfigs;
   const contents = 'Translate from Turkish to German. Return ONLY the translation: "Merhaba, en yakın eczane nerede?"';
   const jobs = candidates.flatMap((model) =>
     Object.entries(configs).map(async ([cfgName, config]) => {
