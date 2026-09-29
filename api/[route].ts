@@ -211,14 +211,14 @@ Return ONLY the 'id' of the best matching language. Do not provide any explanati
 // Gemini ses modeli metni istenen aksanla okur; ham PCM çıktıyı WAV'a çevirip base64 döndürürüz.
 const TTS_MODELS = ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"];
 
-const ACCENT_NOTES: Record<string, string> = {
-  "ar-EG": "Egyptian Arabic (Cairo accent). Pronounce ج as a hard G (جبنة = gibna), ق as a glottal stop, ث as T or S (تلاتة = talata). Never Fusha pronunciation.",
-  "ar-LB": "Lebanese Arabic (Beirut accent), never Fusha pronunciation.",
-  "ar-MA": "Moroccan Darija (Casablanca accent), never Fusha pronunciation.",
-  "ar-IQ": "Iraqi Arabic (Baghdad accent), never Fusha pronunciation.",
-  "ar-SA": "Saudi Gulf Arabic (Riyadh accent), never Fusha pronunciation.",
+// Gemini TTS talimatı kısa tutulmalı: uzun açıklamalar da sesli okunuyor.
+const ACCENTS: Record<string, string> = {
+  "ar-EG": "an Egyptian Arabic accent from Cairo",
+  "ar-LB": "a Lebanese Arabic accent from Beirut",
+  "ar-MA": "a Moroccan Darija accent",
+  "ar-IQ": "an Iraqi Arabic accent from Baghdad",
+  "ar-SA": "a Saudi Gulf Arabic accent",
 };
-
 const pcmToWavBase64 = (pcmBase64: string, sampleRate = 24000) => {
   const pcm = Buffer.from(pcmBase64, "base64");
   const header = Buffer.alloc(44);
@@ -239,12 +239,12 @@ const pcmToWavBase64 = (pcmBase64: string, sampleRate = 24000) => {
 };
 
 const speakDialect = async (body: any): Promise<RouteResult> => {
-  const { text, languageId, languageName } = body;
+  const { text, languageId, languageName, country } = body;
   if (!text) {
     return { status: 400, body: { error: "Text is required" } };
   }
-  const accent = ACCENT_NOTES[languageId] || `${languageName}, with an authentic native local accent (not the standard/formal pronunciation)`;
-  const contents = `Read the following text aloud exactly as written, naturally and clearly, as a native speaker of ${accent}\n\n${text}`;
+  const accent = ACCENTS[languageId] || `the local accent of ${country || languageName}`;
+  const contents = `Say in ${accent}: ${text}`;
 
   const ai = getGenAI();
   const started = Date.now();
