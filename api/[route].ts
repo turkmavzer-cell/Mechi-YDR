@@ -25,10 +25,18 @@ const getGenAI = () => {
   return new GoogleGenAI({ apiKey: apiKey || "" });
 };
 
+const isQuotaError = (error: any) =>
+  /\b429\b|RESOURCE_EXHAUSTED|exceeded your current quota/i.test(`${error?.status ?? ""} ${error?.message ?? ""}`);
+
+// Tüm modeller denendi ve en az biri kota nedeniyle reddetti: istemci "kota doldu" gösterir
+const QUOTA_RESULT: RouteResult = { status: 429, body: { error: "quota" } };
+class QuotaExceeded extends Error {}
+
 // generateContent sarmalayıcı: hata veya zaman aşımında hemen sıradaki modele geçer
 const generate = async (params: { contents: any; config?: any }, models: ModelOption[] = MODELS) => {
   const ai = getGenAI();
   let lastError: any;
+  let quotaHit = false;
   const started = Date.now();
   for (const { model, config, timeoutMs } of models) {
     try {
@@ -42,9 +50,11 @@ const generate = async (params: { contents: any; config?: any }, models: ModelOp
       return response;
     } catch (error: any) {
       lastError = error;
+      if (isQuotaError(error)) quotaHit = true;
       console.warn(`${model} failed:`, String(error?.message).slice(0, 200));
     }
   }
+  if (quotaHit) throw new QuotaExceeded(String(lastError?.message));
   throw lastError;
 };
 
@@ -254,6 +264,7 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
   const ai = getGenAI();
   const started = Date.now();
   let lastError: any;
+  let ttsQuotaHit = false;
   for (const model of TTS_MODELS) {
     try {
       const response = await ai.models.generateContent({
@@ -273,9 +284,11 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
       return { status: 200, body: { audio: pcmToWavBase64(data, rate), mimeType: "audio/wav" } };
     } catch (error: any) {
       lastError = error;
+      if (isQuotaError(error)) ttsQuotaHit = true;
       console.warn(`${model} TTS failed:`, String(error?.message).slice(0, 200));
     }
   }
+  if (ttsQuotaHit) return QUOTA_RESULT;
   return { status: 502, body: { error: lastError?.message || "TTS failed" } };
 };
 
@@ -386,6 +399,7 @@ export const handleRoute = async (
     return await handler(body || {});
   } catch (error: any) {
     console.error(`/api/${route} error:`, error);
+    if (error instanceof QuotaExceeded) return QUOTA_RESULT;
     return { status: 500, body: { error: error?.message || "Request failed" } };
   }
 };

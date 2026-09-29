@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { LANGUAGES, Language } from '../types';
-import { getConsulateInfo, getAddressFromCoordinates, LocationDetails } from '../services/geminiService';
+import { getConsulateInfo, getAddressFromCoordinates, LocationDetails, lastRequestHitQuota } from '../services/geminiService';
 import { useLocalization } from '../lib/i18n';
 
 interface SettingsModalProps {
@@ -89,7 +89,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         if (data) {
             setConsulateInfo(data);
         } else {
-            setInfoError(t('guideError'));
+            setInfoError(lastRequestHitQuota() ? t('quotaExceeded') : t('guideError'));
         }
         
         setLoadingInfo(false);

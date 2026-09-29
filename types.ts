@@ -12,7 +12,7 @@ export interface Language {
 export interface Message {
     id: string;
     text: string;
-    sender: 'user' | 'bot';
+    sender: 'user' | 'bot' | 'system';
     language: string;
     timestamp: number;
     isAudio?: boolean;

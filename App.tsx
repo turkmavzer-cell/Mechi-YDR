@@ -6,7 +6,7 @@ import { translateText, getLanguageFromLocation } from './services/geminiService
 import { LocalizationProvider, useLocalization } from './lib/i18n';
 import { speak, stopSpeaking, startListening as startSpeechSession, ListenSession, ensureMicPermission } from './lib/speech';
 import { startConversationCapture, CaptureController, CaptureState } from './lib/conversation';
-import { converseAudio } from './services/geminiService';
+import { converseAudio, lastRequestHitQuota } from './services/geminiService';
 
 // Mesajda dil adı saklanır; seslendirme için dil nesnesini geri bul
 const findLanguageByName = (name: string, fallback: Language) =>
@@ -56,6 +56,12 @@ const AppContent: React.FC<{
 
   const speakText = (text: string, lang: Language) => speak(text, lang);
 
+  // Kota doldu / bağlantı hatası gibi uygulama bildirimleri sohbet akışında gösterilir
+  const addSystemMessage = (text: string) => {
+    const now = Date.now();
+    setMessages(prev => [...prev, { id: `sys-${now}`, text, sender: 'system', language: '', timestamp: now }]);
+  };
+
   const handleConversationTurn = async (
     textToTranslate: string,
     originalLang: Language,
@@ -73,19 +79,25 @@ const AppContent: React.FC<{
       setMessages(prev => [...prev, userMsg]);
       setIsProcessing(true);
   
-      const translatedText = await translateText(textToTranslate, originalLang.name, translationTargetLang.name);
-  
+      const result = await translateText(textToTranslate, originalLang.name, translationTargetLang.name);
+      setIsProcessing(false);
+
+      if (result.failed) {
+        // Hata mesajı hedef dilin sesiyle okunmaz
+        addSystemMessage(result.quota ? t('quotaExceeded') : t('connectionError'));
+        return;
+      }
+
       const botMsg: Message = {
         id: (Date.now() + 1).toString(),
-        text: translatedText,
+        text: result.text,
         sender: 'bot',
         language: translationTargetLang.name,
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, botMsg]);
-      setIsProcessing(false);
-  
-      speakText(translatedText, translationTargetLang);
+
+      speakText(result.text, translationTargetLang);
   };
 
   const handleTextSend = () => {
@@ -159,6 +171,11 @@ const AppContent: React.FC<{
       ]);
       setConvPhase('speaking');
       await speak(result.translation, to);
+    } else if (!result && lastRequestHitQuota()) {
+      // Kota dolunca her cümlede aynı hatayı almamak için sohbet durdurulur
+      addSystemMessage(t('quotaExceeded'));
+      stopConversation();
+      return;
     }
     if (captureRef.current === capture) capture.resume();
   };
@@ -265,7 +282,14 @@ const AppContent: React.FC<{
             </div>
         )}
         
-        {messages.map((msg) => (
+        {messages.map((msg) => msg.sender === 'system' ? (
+          <div key={msg.id} className="flex justify-center">
+            <div className="max-w-[90%] flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-amber-200 text-sm rounded-xl px-4 py-3">
+              <span className="shrink-0">⚠️</span>
+              <span>{msg.text}</span>
+            </div>
+          </div>
+        ) : (
           <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${
                 msg.sender === 'user' 

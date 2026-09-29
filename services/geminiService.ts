@@ -5,20 +5,29 @@ import { Language } from "../types";
 const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 const APP_KEY = import.meta.env.VITE_APP_KEY || "";
 
-const apiFetch = (path: string, init: RequestInit) =>
-    fetch(`${API_BASE}${path}`, {
+// Sunucu 429 döndürürse Gemini'nin günlük ücretsiz kotası dolmuştur
+let quotaHit = false;
+export const lastRequestHitQuota = () => quotaHit;
+
+const apiFetch = async (path: string, init: RequestInit) => {
+    const response = await fetch(`${API_BASE}${path}`, {
         ...init,
         headers: {
             "Content-Type": "application/json",
             ...(APP_KEY ? { "x-app-key": APP_KEY } : {}),
         },
     });
+    quotaHit = response.status === 429;
+    return response;
+};
+
+export type TranslateResult = { text: string; failed: boolean; quota: boolean };
 
 export const translateText = async (
-    text: string, 
-    sourceLang: string, 
+    text: string,
+    sourceLang: string,
     targetLang: string
-): Promise<string> => {
+): Promise<TranslateResult> => {
     try {
         const response = await apiFetch("/api/translate", {
             method: "POST",
@@ -31,10 +40,11 @@ export const translateText = async (
         }
 
         const data = await response.json();
-        return data.translation || "Çeviri hatası oluştu.";
+        if (!data.translation) return { text: "", failed: true, quota: false };
+        return { text: data.translation, failed: false, quota: false };
     } catch (error) {
         console.error("Translation error:", error);
-        return "Bağlantı hatası. Lütfen tekrar deneyin.";
+        return { text: "", failed: true, quota: quotaHit };
     }
 };
 

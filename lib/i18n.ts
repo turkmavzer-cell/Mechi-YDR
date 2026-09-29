@@ -33,6 +33,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "Wird übersetzt...",
         convSpeaking: "Wird vorgelesen...",
         convStop: "Gespräch beenden",
+        quotaExceeded: "Das kostenlose Tageskontingent ist aufgebraucht. Es wird täglich um 10:00 Uhr (Türkei) erneuert.",
+        connectionError: "Verbindungsfehler. Bitte versuchen Sie es erneut.",
     },
     'ar-SA': {
         settingsTitle: "الإعدادات والقنصلية",
@@ -65,6 +67,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "جارٍ الترجمة...",
         convSpeaking: "جارٍ القراءة...",
         convStop: "إنهاء المحادثة",
+        quotaExceeded: "انتهت الحصة المجانية اليومية. تتجدد كل يوم الساعة 10:00 بتوقيت تركيا.",
+        connectionError: "خطأ في الاتصال. يرجى المحاولة مرة أخرى.",
     },
     'az-AZ': {
         settingsTitle: "Ayarlar & Konsulluq",
@@ -97,6 +101,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "Tərcümə edilir...",
         convSpeaking: "Səsləndirilir...",
         convStop: "Söhbəti bitir",
+        quotaExceeded: "Gündəlik pulsuz limit bitdi. Hər gün saat 10:00-da (Türkiyə) yenilənir.",
+        connectionError: "Bağlantı xətası. Yenidən cəhd edin.",
     },
     'id-ID': {
         settingsTitle: "Pengaturan & Konsulat",
@@ -129,6 +135,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "Menerjemahkan...",
         convSpeaking: "Membacakan...",
         convStop: "Akhiri percakapan",
+        quotaExceeded: "Kuota gratis harian habis. Diperbarui setiap hari pukul 10:00 (waktu Turki).",
+        connectionError: "Kesalahan koneksi. Silakan coba lagi.",
     },
     'en-US': {
         settingsTitle: "Settings & Consulate",
@@ -161,6 +169,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "Translating...",
         convSpeaking: "Speaking...",
         convStop: "End conversation",
+        quotaExceeded: "The free daily quota is used up. It renews every day at 10:00 (Turkey time).",
+        connectionError: "Connection error. Please try again.",
     },
     'it-IT': {
         settingsTitle: "Impostazioni e Consolato",
@@ -193,6 +203,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "Traduzione...",
         convSpeaking: "Lettura...",
         convStop: "Termina conversazione",
+        quotaExceeded: "La quota gratuita giornaliera è esaurita. Si rinnova ogni giorno alle 10:00 (ora turca).",
+        connectionError: "Errore di connessione. Riprova.",
     },
     'jp-OS': {
         settingsTitle: "設定と領事館",
@@ -225,6 +237,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "翻訳中...",
         convSpeaking: "読み上げ中...",
         convStop: "会話を終了",
+        quotaExceeded: "本日の無料枠を使い切りました。毎日10:00（トルコ時間）にリセットされます。",
+        connectionError: "接続エラーです。もう一度お試しください。",
     },
     'tr-TR': {
         settingsTitle: "Ayarlar & Konsolosluk",
@@ -259,6 +273,8 @@ const translations: Record<string, Record<string, string>> = {
         convTranslating: "Çevriliyor...",
         convSpeaking: "Seslendiriliyor...",
         convStop: "Sohbeti bitir",
+        quotaExceeded: "Günlük ücretsiz kota doldu. Kota her gün saat 10:00'da yenilenir.",
+        connectionError: "Bağlantı hatası. Lütfen tekrar deneyin.",
     },
 };
 
