@@ -2,5 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "buildCommand": "vite build",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "regions": ["fra1"],
+  "functions": {
+    "api/[route].ts": { "maxDuration": 60 }
+  }
 }

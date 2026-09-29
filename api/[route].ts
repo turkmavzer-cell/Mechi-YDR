@@ -173,7 +173,45 @@ Return ONLY the 'id' of the best matching language. Do not provide any explanati
   return { status: 200, body: { languageId: null } };
 };
 
+// GEÇİCİ teşhis: modelleri ve düşünme ayarlarını aynı cümleyle yarıştırır
+const diag = async (): Promise<RouteResult> => {
+  const ai = getGenAI();
+  const names: string[] = [];
+  try {
+    const pager = await ai.models.list();
+    for await (const m of pager) {
+      if (m.name && /flash/i.test(m.name)) names.push(m.name.replace("models/", ""));
+    }
+  } catch (e: any) {
+    names.push(`list-error: ${e?.message}`);
+  }
+  const candidates = Array.from(new Set([...MODELS, ...names.filter((n) => !/image|tts|audio|live|preview-0|exp/i.test(n))])).slice(0, 8);
+  const configs: Record<string, any> = {
+    default: {},
+    minimal: { thinkingConfig: { thinkingLevel: "MINIMAL" } },
+    budget0: { thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const contents = 'Translate from Turkish to German. Return ONLY the translation: "Merhaba, en yakın eczane nerede?"';
+  const jobs = candidates.flatMap((model) =>
+    Object.entries(configs).map(async ([cfgName, config]) => {
+      const t0 = Date.now();
+      try {
+        const r = await ai.models.generateContent({
+          model,
+          contents,
+          config: { ...config, httpOptions: { timeout: 25000 } },
+        });
+        return { model, cfg: cfgName, ms: Date.now() - t0, ok: true, out: r.text?.trim().slice(0, 60) };
+      } catch (e: any) {
+        return { model, cfg: cfgName, ms: Date.now() - t0, ok: false, out: String(e?.message).slice(0, 120) };
+      }
+    })
+  );
+  return { status: 200, body: { region: process.env.VERCEL_REGION, models: names, results: await Promise.all(jobs) } };
+};
+
 const ROUTES: Record<string, (body: any) => Promise<RouteResult>> = {
+  diag,
   translate,
   "reverse-geocode": reverseGeocode,
   consulate,
