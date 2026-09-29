@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Uygulamanın koyu zemini (index.css --color-dark) -->
+    <!-- Uygulamanın koyu zemini (index.css içindeki color-dark ile aynı) -->
     <color name="mechi_dark">#0F172A</color>
 </resources>
