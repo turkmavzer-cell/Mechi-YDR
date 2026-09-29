@@ -2,8 +2,14 @@
 // /api/language-from-location, /api/health. Aynı mantık yerelde server.ts tarafından da kullanılır.
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Ana model yoğun (503) veya kota dolu (429) ise sıradaki modele geçilir.
-const MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
+// Hız ölçümüne göre sıralı (Eylül 2026, ücretsiz katman, Frankfurt):
+// 3-flash-preview + minimum düşünme ~1 sn; 3.1-flash-lite ~1,5-5 sn; 3.5-flash ~3-8 sn.
+// Bir model yoğun/kotası dolu/yavaşsa beklemeden sıradakine geçilir.
+const MODELS: { model: string; config: any; timeoutMs: number }[] = [
+  { model: "gemini-3-flash-preview", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 8000 },
+  { model: "gemini-3.1-flash-lite", config: {}, timeoutMs: 10000 },
+  { model: "gemini-3.5-flash", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 20000 },
+];
 
 type RouteResult = { status: number; body: unknown };
 
@@ -15,30 +21,49 @@ const getGenAI = () => {
   return new GoogleGenAI({ apiKey: apiKey || "" });
 };
 
-const isRetryable = (error: any) => {
-  const text = `${error?.status ?? ""} ${error?.message ?? ""}`;
-  return /\b(503|429|404|500)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|NOT_FOUND|overloaded|high demand/i.test(text);
-};
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// generateContent sarmalayıcı: her model için bir yeniden deneme, sonra yedek modele geçiş
+// generateContent sarmalayıcı: hata veya zaman aşımında hemen sıradaki modele geçer
 const generate = async (params: { contents: string; config?: any }) => {
   const ai = getGenAI();
   let lastError: any;
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        return await ai.models.generateContent({ model, ...params });
-      } catch (error: any) {
-        lastError = error;
-        if (!isRetryable(error)) throw error;
-        console.warn(`${model} attempt ${attempt + 1} failed:`, error?.message);
-        if (attempt === 0) await sleep(700);
-      }
+  for (const { model, config, timeoutMs } of MODELS) {
+    try {
+      return await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: { ...config, ...params.config, httpOptions: { timeout: timeoutMs } },
+      });
+    } catch (error: any) {
+      lastError = error;
+      console.warn(`${model} failed:`, String(error?.message).slice(0, 200));
     }
   }
   throw lastError;
+};
+
+// Modelin fasih/standart dile kaymaya en yatkın olduğu lehçeler için somut yazım kuralları
+const dialectHints = (targetLang: string): string => {
+  const t = targetLang.toLocaleLowerCase("tr");
+  if (/mısır|misir|egypt/.test(t)) {
+    return [
+      "- Egyptian Arabic (Masri), Cairo speech. Write ث as ت or س as pronounced: تلاتة (not ثلاثة), تمانية (not ثمانية), تاني (not ثاني), كتير (not كثير).",
+      "- Use Egyptian words:عايز/عايزة (not أريد), إزاي (not كيف), فين (not أين), إيه (not ماذا), دلوقتي (not الآن), مش (not ليس/لا), كده, بتاع, أوي.",
+      "- Egyptian numbers: واحد، اتنين، تلاتة، أربعة، خمسة، ستة، سبعة، تمانية، تسعة، عشرة. Cheese = جبنة, bread = عيش, money = فلوس.",
+      "- Verbs with Egyptian prefixes: بـ for present (بحب، بتروح), هـ for future (هروح).",
+    ].join("\n");
+  }
+  if (/lübnan|lubnan|leban|suriye|syria|şam|levant/.test(t)) {
+    return "- Levantine (Lebanese) Arabic: كيفك، شو، هلق، بدي، منيح، كتير، تلاتة، هيدا/هيدي. Never Fusha.";
+  }
+  if (/fas|darija|morocc/.test(t)) {
+    return "- Moroccan Darija: واش، بغيت، شحال، دابا، مزيان، بزاف، فين، علاش. Never Fusha.";
+  }
+  if (/irak|iraq/.test(t)) {
+    return "- Iraqi Arabic: شلونك، شكو ماكو، هواية، اريد، هسه، وين، شنو، زين. Never Fusha.";
+  }
+  if (/suudi|körfez|korfez|saudi|gulf/.test(t)) {
+    return "- Gulf/Saudi Arabic: وش، أبغى، الحين، زين، وايد، وين، كيفك. Never Fusha.";
+  }
+  return "";
 };
 
 const translate = async (body: any): Promise<RouteResult> => {
@@ -47,14 +72,16 @@ const translate = async (body: any): Promise<RouteResult> => {
     return { status: 400, body: { error: "Text is required" } };
   }
 
+  const hints = dialectHints(`${targetLang}`);
   const prompt = `
 Translate the following text strictly from "${sourceLang}" to "${targetLang}".
 
-IMPORTANT:
-- If the target is a specific dialect (e.g., Aegean Turkish, Egyptian Arabic), usage of local idioms, slang, and specific tone is MANDATORY.
-- If the source is a dialect, interpret the nuances correctly.
-- Return ONLY the translated text, no explanations.
-
+RULES:
+- If the target is a regional dialect, write it EXACTLY as a native speaker of that dialect would SAY it in everyday street conversation. Do NOT use the standard/formal language (e.g. no Modern Standard Arabic / Fusha when the target is an Arabic dialect, no Hochdeutsch when the target is Bavarian).
+- Use the dialect's own vocabulary, grammar, numbers and colloquial spelling that reflects its pronunciation. The text will be read aloud by a text-to-speech engine, so the spelling must match how it is spoken.
+- If the source is a dialect, interpret its nuances correctly.
+- Return ONLY the translated text, no explanations, no quotes, no transliteration.
+${hints ? `\nDialect notes for ${targetLang}:\n${hints}\n` : ""}
 Text to translate: "${text}"
 `;
 
@@ -185,7 +212,7 @@ const diag = async (body: any): Promise<RouteResult> => {
   } catch (e: any) {
     names.push(`list-error: ${e?.message}`);
   }
-  const candidates: string[] = body?.models?.length ? body.models : Array.from(new Set([...MODELS, ...names.filter((n) => !/image|tts|audio|live|preview-0|exp/i.test(n))])).slice(0, 8);
+  const candidates: string[] = body?.models?.length ? body.models : Array.from(new Set([...MODELS.map((m) => m.model), ...names.filter((n) => !/image|tts|audio|live|preview-0|exp/i.test(n))])).slice(0, 8);
   const allConfigs: Record<string, any> = {
     default: {},
     minimal: { thinkingConfig: { thinkingLevel: "MINIMAL" } },
