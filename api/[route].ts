@@ -13,6 +13,9 @@ const MODELS: { model: string; config: any; timeoutMs: number }[] = [
 
 type RouteResult = { status: number; body: unknown };
 
+// Son isteği hangi modelin ne kadar sürede cevapladığı (yanıt başlığında görünür)
+let lastServed = "";
+
 const getGenAI = () => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -25,13 +28,17 @@ const getGenAI = () => {
 const generate = async (params: { contents: string; config?: any }) => {
   const ai = getGenAI();
   let lastError: any;
+  const started = Date.now();
   for (const { model, config, timeoutMs } of MODELS) {
     try {
-      return await ai.models.generateContent({
+      const t0 = Date.now();
+      const response = await ai.models.generateContent({
         model,
         contents: params.contents,
         config: { ...config, ...params.config, httpOptions: { timeout: timeoutMs } },
       });
+      lastServed = `${model};model=${Date.now() - t0}ms;total=${Date.now() - started}ms`;
+      return response;
     } catch (error: any) {
       lastError = error;
       console.warn(`${model} failed:`, String(error?.message).slice(0, 200));
@@ -255,6 +262,8 @@ export default async function handler(req: any, res: any) {
     return;
   }
   const route = String(req.query?.route || "");
+  lastServed = "";
   const result = await handleRoute(route, req.method, req.body, req.headers["x-app-key"]);
+  if (lastServed) res.setHeader("x-mechi-model", lastServed);
   res.status(result.status).json(result.body);
 }
