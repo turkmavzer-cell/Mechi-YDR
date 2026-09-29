@@ -130,13 +130,14 @@ export interface ConverseResult {
 export const converseAudio = async (
     audioWavBase64: string,
     langA: Language,
-    langB: Language
+    langB: Language,
+    previousSpeaker?: 'A' | 'B'
 ): Promise<ConverseResult | null> => {
     try {
         const pick = (l: Language) => ({ id: l.id, name: l.name, country: l.country });
         const response = await apiFetch("/api/converse", {
             method: "POST",
-            body: JSON.stringify({ audio: audioWavBase64, langA: pick(langA), langB: pick(langB) })
+            body: JSON.stringify({ audio: audioWavBase64, langA: pick(langA), langB: pick(langB), previousSpeaker })
         });
         if (!response.ok) return null;
         return await response.json();

@@ -5,7 +5,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 // Hız ölçümüne göre sıralı (Eylül 2026, ücretsiz katman, Frankfurt):
 // 3-flash-preview + minimum düşünme ~1 sn; 3.1-flash-lite ~1,5-5 sn; 3.5-flash ~3-8 sn.
 // Bir model yoğun/kotası dolu/yavaşsa beklemeden sıradakine geçilir.
-const MODELS: { model: string; config: any; timeoutMs: number }[] = [
+type ModelOption = { model: string; config: any; timeoutMs: number };
+const MODELS: ModelOption[] = [
   { model: "gemini-3-flash-preview", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 8000 },
   { model: "gemini-3.1-flash-lite", config: {}, timeoutMs: 10000 },
   { model: "gemini-3.5-flash", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 20000 },
@@ -25,11 +26,11 @@ const getGenAI = () => {
 };
 
 // generateContent sarmalayıcı: hata veya zaman aşımında hemen sıradaki modele geçer
-const generate = async (params: { contents: any; config?: any }) => {
+const generate = async (params: { contents: any; config?: any }, models: ModelOption[] = MODELS) => {
   const ai = getGenAI();
   let lastError: any;
   const started = Date.now();
-  for (const { model, config, timeoutMs } of MODELS) {
+  for (const { model, config, timeoutMs } of models) {
     try {
       const t0 = Date.now();
       const response = await ai.models.generateContent({
@@ -280,8 +281,15 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
 
 // Sohbet modu: kısa bir ses parçasını (16 kHz WAV) alır; konuşulan dili iki dil arasından
 // belirler, yazıya döker ve diğer dile çevirir. Tek model çağrısı.
+// Sesi anlamada lite model zayıf (aksanlı kısa kelimeleri yanlış dile atıyor), en sona alındı.
+const AUDIO_MODELS: ModelOption[] = [
+  { model: "gemini-3-flash-preview", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 10000 },
+  { model: "gemini-3.5-flash", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 15000 },
+  { model: "gemini-3.1-flash-lite", config: {}, timeoutMs: 10000 },
+];
+
 const converse = async (body: any): Promise<RouteResult> => {
-  const { audio, langA, langB } = body;
+  const { audio, langA, langB, previousSpeaker } = body;
   if (!audio || !langA || !langB) {
     return { status: 400, body: { error: "audio, langA and langB required" } };
   }
@@ -290,48 +298,55 @@ const converse = async (body: any): Promise<RouteResult> => {
   // Model harf etiketlerini (A/B) karıştırabiliyor; bu yüzden dilin adını seçtiriyoruz
   const nameA = `${langA.name} (${langA.country || ""})`;
   const nameB = `${langB.name} (${langB.country || ""})`;
+  const previous = previousSpeaker === "A" ? nameA : previousSpeaker === "B" ? nameB : "";
   const prompt = `
-Two people are having a face-to-face conversation through an interpreter.
-One speaks: ${nameA}
-The other speaks: ${nameB}
-
-Listen to the audio clip and:
-1. Identify which of the two languages is actually spoken in the audio (listen to the sounds, not the meaning). Set "spoken_language" to exactly "${nameA}" or "${nameB}". If there is no clear human speech (silence, noise, music, coughing), set it to "none".
-2. Transcribe what was said, in the language spoken.
-3. Translate it into the OTHER language.
+Two people are having a face-to-face conversation through an interpreter app.
+Person 1 speaks: ${nameA}
+Person 2 speaks: ${nameB}
+${previous ? `The previous turn was in ${previous}. Turns usually alternate, but the same person may speak twice.\n` : ""}
+Listen to the audio clip carefully and fill the fields in order:
+1. "heard_as_1": write what you hear as if it were ${nameA}, in that language's normal script.
+2. "heard_as_2": write what you hear as if it were ${nameB}, in that language's normal script.
+3. "spoken_language": decide which of the two is REALLY spoken. Choose the language in which the words form real, meaningful words/sentences. People often speak with a foreign accent: an Arabic word said with a Turkish accent is still Arabic (e.g. "بكام" is Arabic, not the Turkish-looking "bıkam"). A single word or short phrase counts. Set exactly "${nameA}", "${nameB}", or "none" if there is no clear human speech (silence, noise, music, coughing).
+4. "translation": translate the chosen transcript into the OTHER language.
 
 Translation rules:
 - If the target is a regional dialect, write it EXACTLY as a native speaker of that dialect would SAY it in everyday conversation, using the dialect's own vocabulary, numbers and colloquial spelling. Never use the standard/formal form (e.g. no Fusha for Arabic dialects).
-- Keep it natural and short, like a real interpreter.
+- Keep it natural and short, like a real interpreter. Never repeat words.
 ${hintsA ? `\nNotes for ${langA.name}:\n${hintsA}\n` : ""}${hintsB ? `\nNotes for ${langB.name}:\n${hintsB}\n` : ""}`;
 
-  const response = await generate({
-    contents: [
-      { role: "user", parts: [{ inlineData: { mimeType: "audio/wav", data: audio } }, { text: prompt }] },
-    ] as any,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          spoken_language: { type: Type.STRING, enum: [nameA, nameB, "none"] },
-          transcript: { type: Type.STRING },
-          translation: { type: Type.STRING },
+  const response = await generate(
+    {
+      contents: [
+        { role: "user", parts: [{ inlineData: { mimeType: "audio/wav", data: audio } }, { text: prompt }] },
+      ] as any,
+      config: {
+        maxOutputTokens: 600,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            heard_as_1: { type: Type.STRING },
+            heard_as_2: { type: Type.STRING },
+            spoken_language: { type: Type.STRING, enum: [nameA, nameB, "none"] },
+            translation: { type: Type.STRING },
+          },
+          required: ["heard_as_1", "heard_as_2", "spoken_language", "translation"],
+          propertyOrdering: ["heard_as_1", "heard_as_2", "spoken_language", "translation"],
         },
-        required: ["spoken_language", "transcript", "translation"],
-        propertyOrdering: ["spoken_language", "transcript", "translation"],
       },
     },
-  });
+    AUDIO_MODELS
+  );
 
   if (response.text) {
     const r = JSON.parse(response.text);
     const speaker = r.spoken_language === nameA ? "A" : r.spoken_language === nameB ? "B" : "none";
-    return { status: 200, body: { speaker, transcript: r.transcript, translation: r.translation } };
+    const transcript = speaker === "A" ? r.heard_as_1 : speaker === "B" ? r.heard_as_2 : "";
+    return { status: 200, body: { speaker, transcript, translation: r.translation } };
   }
   return { status: 500, body: { error: "No response" } };
 };
-
 const ROUTES: Record<string, (body: any) => Promise<RouteResult>> = {
   speak: speakDialect,
   converse,

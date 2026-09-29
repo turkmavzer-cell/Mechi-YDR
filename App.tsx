@@ -132,6 +132,8 @@ const AppContent: React.FC<{
   const [convPhase, setConvPhase] = useState<ConvPhase>('starting');
   const [micLevel, setMicLevel] = useState(0);
   const captureRef = useRef<CaptureController | null>(null);
+  // Sohbette sıra genelde değişir; modele ipucu olarak önceki konuşmacı verilir
+  const lastSpeakerRef = useRef<'A' | 'B' | undefined>(undefined);
   // Mikrofon geri çağrıları eski state'i görmesin diye güncel diller ref'te tutulur
   const langsRef = useRef({ sourceLang, targetLang });
   langsRef.current = { sourceLang, targetLang };
@@ -142,10 +144,11 @@ const AppContent: React.FC<{
     capture.pause();
     setConvPhase('processing');
     const { sourceLang: a, targetLang: b } = langsRef.current;
-    const result = await converseAudio(wav, a, b);
+    const result = await converseAudio(wav, a, b, lastSpeakerRef.current);
     if (captureRef.current !== capture) return; // bu arada sohbet kapatıldı
 
     if (result && result.speaker !== 'none' && result.translation?.trim()) {
+      lastSpeakerRef.current = result.speaker;
       const from = result.speaker === 'A' ? a : b;
       const to = result.speaker === 'A' ? b : a;
       const now = Date.now();
@@ -177,6 +180,7 @@ const AppContent: React.FC<{
     }
     setIsConversing(true);
     setConvPhase('starting');
+    lastSpeakerRef.current = undefined;
     try {
       captureRef.current = await startConversationCapture({
         onSegment: (wav) => { handleSegment(wav); },
