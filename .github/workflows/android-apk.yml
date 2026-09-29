@@ -41,6 +41,13 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }}
 
+      - name: Verify APK signature (must match keystore/debug.keystore)
+        run: |
+          APKSIGNER=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)apksigner
+          $APKSIGNER verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | tee certs.txt
+          grep -qi "SHA-256 digest: 5832f90eb65881c6519c7691e0ba0d50c514fe60aed72ecb4007a5d9c782300e" certs.txt \
+            || { echo "::error::APK beklenen anahtarla imzalanmadi; telefonda guncelleme olarak kurulamaz"; exit 1; }
+
       - uses: actions/upload-artifact@v4
         with:
           name: MeChi-apk-${{ github.run_number }}
