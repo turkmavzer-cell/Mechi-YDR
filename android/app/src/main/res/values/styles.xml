@@ -18,5 +18,9 @@
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <!-- Android 12+ açılış ekranı: koyu zemin üzerinde MeChi ikonu -->
+        <item name="windowSplashScreenBackground">@color/mechi_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>
