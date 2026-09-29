@@ -2,8 +2,8 @@
 // konuşmanın başını ve sonunu bulur; her konuşma parçası 16 kHz mono WAV (base64) olarak verilir.
 
 const TARGET_RATE = 16000;
-const END_SILENCE_MS = 900; // bu kadar sessizlik olunca parça biter
-const START_SPEECH_MS = 200; // bu kadar ses olunca konuşma başlamış sayılır
+const END_SILENCE_MS = 650; // bu kadar sessizlik olunca parça biter
+const START_SPEECH_MS = 150; // bu kadar ses olunca konuşma başlamış sayılır
 const MIN_SPEECH_MS = 450; // bundan kısa sesler (öksürük, tık) gönderilmez
 const MAX_SEGMENT_MS = 15000;
 const PRE_ROLL_MS = 300; // konuşmanın başı kırpılmasın

@@ -52,7 +52,7 @@ const AppContent: React.FC<{
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isProcessing]);
 
   const speakText = (text: string, lang: Language) => speak(text, lang);
 
@@ -139,52 +139,80 @@ const AppContent: React.FC<{
   };
 
   // --- Sohbet modu: mikrofon sürekli açık, konuşulan dil otomatik bulunur ---
-  type ConvPhase = CaptureState | 'processing' | 'speaking' | 'starting';
+  type ConvPhase = CaptureState | 'starting';
   const [isConversing, setIsConversing] = useState(false);
+  // Mikrofonun durumu ve çevirmenin meşguliyeti ayrı tutulur: çeviri beklenirken de dinlenir
   const [convPhase, setConvPhase] = useState<ConvPhase>('starting');
+  const [convBusy, setConvBusy] = useState<'processing' | 'speaking' | null>(null);
+  const segmentQueueRef = useRef<string[]>([]);
+  const queueRunningRef = useRef(false);
   const [micLevel, setMicLevel] = useState(0);
   const captureRef = useRef<CaptureController | null>(null);
   // Sohbette sıra genelde değişir; modele ipucu olarak önceki konuşmacı verilir
   const lastSpeakerRef = useRef<'A' | 'B' | undefined>(undefined);
+
+  // Alt panel büyüyüp küçülünce son mesaj görünür kalsın
+  useEffect(() => {
+    scrollToBottom();
+  }, [isConversing, inputMode]);
   // Mikrofon geri çağrıları eski state'i görmesin diye güncel diller ref'te tutulur
   const langsRef = useRef({ sourceLang, targetLang });
   langsRef.current = { sourceLang, targetLang };
 
-  const handleSegment = async (wav: string) => {
-    const capture = captureRef.current;
-    if (!capture) return;
-    capture.pause();
-    setConvPhase('processing');
-    const { sourceLang: a, targetLang: b } = langsRef.current;
-    const result = await converseAudio(wav, a, b, lastSpeakerRef.current);
-    if (captureRef.current !== capture) return; // bu arada sohbet kapatıldı
+  // Konuşma parçaları sırayla işlenir; mikrofon yalnızca çeviri seslendirilirken kapanır
+  // (kendi sesimizi çevirmemek için). Çeviri beklenirken söylenenler sıraya eklenir.
+  const processSegmentQueue = async () => {
+    if (queueRunningRef.current) return;
+    queueRunningRef.current = true;
+    try {
+      while (segmentQueueRef.current.length > 0) {
+        const capture = captureRef.current;
+        if (!capture) break;
+        const wav = segmentQueueRef.current.shift()!;
+        setConvBusy('processing');
+        const { sourceLang: a, targetLang: b } = langsRef.current;
+        const result = await converseAudio(wav, a, b, lastSpeakerRef.current);
+        if (captureRef.current !== capture) break; // bu arada sohbet kapatıldı
 
-    if (result && result.speaker !== 'none' && result.translation?.trim()) {
-      lastSpeakerRef.current = result.speaker;
-      const from = result.speaker === 'A' ? a : b;
-      const to = result.speaker === 'A' ? b : a;
-      const now = Date.now();
-      setMessages(prev => [
-        ...prev,
-        { id: `${now}`, text: result.transcript, sender: 'user', language: from.name, timestamp: now },
-        { id: `${now + 1}`, text: result.translation, sender: 'bot', language: to.name, timestamp: now },
-      ]);
-      setConvPhase('speaking');
-      await speak(result.translation, to);
-    } else if (!result && lastRequestHitQuota()) {
-      // Kota dolunca her cümlede aynı hatayı almamak için sohbet durdurulur
-      addSystemMessage(t('quotaExceeded'));
-      stopConversation();
-      return;
+        if (result && result.speaker !== 'none' && result.translation?.trim()) {
+          lastSpeakerRef.current = result.speaker;
+          const from = result.speaker === 'A' ? a : b;
+          const to = result.speaker === 'A' ? b : a;
+          const now = Date.now();
+          setMessages(prev => [
+            ...prev,
+            { id: `${now}`, text: result.transcript, sender: 'user', language: from.name, timestamp: now },
+            { id: `${now + 1}`, text: result.translation, sender: 'bot', language: to.name, timestamp: now },
+          ]);
+          setConvBusy('speaking');
+          capture.pause();
+          await speak(result.translation, to);
+          if (captureRef.current === capture) capture.resume();
+        } else if (!result && lastRequestHitQuota()) {
+          // Kota dolunca her cümlede aynı hatayı almamak için sohbet durdurulur
+          addSystemMessage(t('quotaExceeded'));
+          stopConversation();
+          break;
+        }
+      }
+    } finally {
+      queueRunningRef.current = false;
+      setConvBusy(null);
     }
-    if (captureRef.current === capture) capture.resume();
+  };
+
+  const handleSegment = (wav: string) => {
+    segmentQueueRef.current.push(wav);
+    processSegmentQueue();
   };
 
   const stopConversation = () => {
     captureRef.current?.stop();
     captureRef.current = null;
+    segmentQueueRef.current = [];
     stopSpeaking();
     setIsConversing(false);
+    setConvBusy(null);
     setMicLevel(0);
   };
 
@@ -201,7 +229,7 @@ const AppContent: React.FC<{
     try {
       captureRef.current = await startConversationCapture({
         onSegment: (wav) => { handleSegment(wav); },
-        onState: (s) => setConvPhase(prev => (prev === 'processing' || prev === 'speaking') && s === 'paused' ? prev : s),
+        onState: setConvPhase,
         onLevel: setMicLevel,
       });
     } catch (e) {
@@ -274,7 +302,7 @@ const AppContent: React.FC<{
         </motion.span>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar pb-32">
+      <main className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 no-scrollbar">
         {messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-50 mt-10">
                 <div className="text-6xl mb-4">💬</div>
@@ -338,7 +366,7 @@ const AppContent: React.FC<{
         <div ref={messagesEndRef} />
       </main>
 
-      <footer className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/90 to-transparent pt-10 safe-bottom px-6">
+      <footer className="shrink-0 bg-gradient-to-t from-black via-black/90 to-dark pt-3 safe-bottom px-6">
         {isConversing ? (
             <div className="flex flex-col items-center gap-3 bg-surface/90 backdrop-blur p-4 rounded-2xl border border-gray-600 shadow-2xl animate-slide-up">
                 <div className="flex items-center justify-between w-full text-xs text-gray-300">
@@ -361,9 +389,9 @@ const AppContent: React.FC<{
                 </div>
 
                 <p className="text-sm text-gray-200 font-medium h-5">
-                    {convPhase === 'processing' ? t('convTranslating')
-                        : convPhase === 'speaking' ? t('convSpeaking')
+                    {convBusy === 'speaking' ? t('convSpeaking')
                         : convPhase === 'speech' ? t('convHearing')
+                        : convBusy === 'processing' ? t('convTranslating')
                         : convPhase === 'starting' ? t('convStarting')
                         : t('convListening')}
                 </p>

@@ -32,13 +32,24 @@ const isQuotaError = (error: any) =>
 const QUOTA_RESULT: RouteResult = { status: 429, body: { error: "quota" } };
 class QuotaExceeded extends Error {}
 
+// Kotası dolan veya aşırı yoğun model bir süre atlanır; her istekte boşuna beklenmez.
+// (Sunucu örneği canlı kaldıkça geçerli; soğuk başlangıçta sıfırlanır.)
+const modelCooldownUntil = new Map<string, number>();
+const coolDown = (model: string, error: any) => {
+  const ms = isQuotaError(error) ? 5 * 60_000 : 30_000;
+  modelCooldownUntil.set(model, Date.now() + ms);
+};
+
 // generateContent sarmalayıcı: hata veya zaman aşımında hemen sıradaki modele geçer
 const generate = async (params: { contents: any; config?: any }, models: ModelOption[] = MODELS) => {
   const ai = getGenAI();
   let lastError: any;
   let quotaHit = false;
   const started = Date.now();
-  for (const { model, config, timeoutMs } of models) {
+  const now = Date.now();
+  const available = models.filter((m) => (modelCooldownUntil.get(m.model) ?? 0) <= now);
+  // Hepsi beklemedeyse yine de hepsini dene (belki yenilenmiştir)
+  for (const { model, config, timeoutMs } of available.length ? available : models) {
     try {
       const t0 = Date.now();
       const response = await ai.models.generateContent({
@@ -51,6 +62,8 @@ const generate = async (params: { contents: any; config?: any }, models: ModelOp
     } catch (error: any) {
       lastError = error;
       if (isQuotaError(error)) quotaHit = true;
+      // Modelin kendisinden kaynaklanan hatalarda (kota, yoğunluk, zaman aşımı) bekleme koy
+      if (!/\b400\b|INVALID_ARGUMENT/.test(String(error?.message))) coolDown(model, error);
       console.warn(`${model} failed:`, String(error?.message).slice(0, 200));
     }
   }
@@ -297,9 +310,9 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
 // belirler, yazıya döker ve diğer dile çevirir. Tek model çağrısı.
 // Sesi anlamada lite model zayıf (aksanlı kısa kelimeleri yanlış dile atıyor), en sona alındı.
 const AUDIO_MODELS: ModelOption[] = [
-  { model: "gemini-3-flash-preview", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 10000 },
-  { model: "gemini-3.5-flash", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 15000 },
-  { model: "gemini-3.1-flash-lite", config: {}, timeoutMs: 10000 },
+  { model: "gemini-3-flash-preview", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 6000 },
+  { model: "gemini-3.5-flash", config: { thinkingConfig: { thinkingLevel: "MINIMAL" } }, timeoutMs: 10000 },
+  { model: "gemini-3.1-flash-lite", config: {}, timeoutMs: 8000 },
 ];
 
 const converse = async (body: any): Promise<RouteResult> => {
