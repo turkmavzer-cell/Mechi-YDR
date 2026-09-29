@@ -42,7 +42,9 @@ jobs:
           set -o pipefail
           ./gradlew assembleDebug -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }} 2>&1 | tee gradle.log || {
             # Hata özetini Actions ekranında görünür annotation olarak yaz
-            grep -E "What went wrong|error:|ERROR:|AAPT|Execution failed|> " gradle.log | head -25 | while IFS= read -r line; do
+            { grep -E "^e: |error:|ERROR:" gradle.log | head -4
+              sed -n '/What went wrong/,/\* Try:/p' gradle.log | grep -v -E "^\s*$|\* Try:" | head -5
+            } | while IFS= read -r line; do
               echo "::error::${line}"
             done
             exit 1
