@@ -1,0 +1,11 @@
+{
+  "name": "MeChi YDR 2",
+  "description": "Yerel lehçeler ve diller arası akıllı çeviri asistanı ve gezi rehberi.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
