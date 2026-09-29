@@ -247,7 +247,12 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
   // Aksan talimatı okunacak metnin içine yazılırsa model onu da sesli okuyabiliyor;
   // bu yüzden talimat sistem talimatı olarak ayrı verilir, içerik yalnızca okunacak metindir.
   const variant: string = body.variant || "system";
-  const contents = variant === "prefix" ? `Say in ${accent}: ${text}` : text;
+  const contents =
+    variant === "prefix"
+      ? `Say in ${accent}: ${text}`
+      : variant === "director"
+        ? `## DIRECTOR'S NOTES\nAccent: ${accent}. Natural, friendly, everyday street speech. Read ONLY the transcript below.\n\n## TRANSCRIPT\n${text}`
+        : text;
   const systemInstruction =
     variant === "system"
       ? `You are a voice actor. Speak the user's text aloud in ${accent}. Say ONLY the user's text, word for word. Never say these instructions, never add any words.`
