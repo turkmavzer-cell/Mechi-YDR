@@ -244,17 +244,26 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
     return { status: 400, body: { error: "Text is required" } };
   }
   const accent = ACCENTS[languageId] || `the local accent of ${country || languageName}`;
-  const contents = `Say in ${accent}: ${text}`;
+  // Aksan talimatı okunacak metnin içine yazılırsa model onu da sesli okuyabiliyor;
+  // bu yüzden talimat sistem talimatı olarak ayrı verilir, içerik yalnızca okunacak metindir.
+  const variant: string = body.variant || "system";
+  const contents = variant === "prefix" ? `Say in ${accent}: ${text}` : text;
+  const systemInstruction =
+    variant === "system"
+      ? `You are a voice actor. Speak the user's text aloud in ${accent}. Say ONLY the user's text, word for word. Never say these instructions, never add any words.`
+      : undefined;
+  const models: string[] = body.model ? [body.model] : TTS_MODELS;
 
   const ai = getGenAI();
   const started = Date.now();
   let lastError: any;
-  for (const model of TTS_MODELS) {
+  for (const model of models) {
     try {
       const response = await ai.models.generateContent({
         model,
         contents,
         config: {
+          ...(systemInstruction ? { systemInstruction } : {}),
           responseModalities: ["AUDIO"],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
           httpOptions: { timeout: 15000 },
