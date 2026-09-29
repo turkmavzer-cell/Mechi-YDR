@@ -283,13 +283,16 @@ const converse = async (body: any): Promise<RouteResult> => {
   }
   const hintsA = dialectHints(langA.name);
   const hintsB = dialectHints(langB.name);
+  // Model harf etiketlerini (A/B) karıştırabiliyor; bu yüzden dilin adını seçtiriyoruz
+  const nameA = `${langA.name} (${langA.country || ""})`;
+  const nameB = `${langB.name} (${langB.country || ""})`;
   const prompt = `
 Two people are having a face-to-face conversation through an interpreter.
-Language A: "${langA.name}" (${langA.country || ""})
-Language B: "${langB.name}" (${langB.country || ""})
+One speaks: ${nameA}
+The other speaks: ${nameB}
 
 Listen to the audio clip and:
-1. Decide whether the speaker is speaking language A or language B. If there is no clear human speech (silence, noise, music, coughing), return speaker "none".
+1. Identify which of the two languages is actually spoken in the audio (listen to the sounds, not the meaning). Set "spoken_language" to exactly "${nameA}" or "${nameB}". If there is no clear human speech (silence, noise, music, coughing), set it to "none".
 2. Transcribe what was said, in the language spoken.
 3. Translate it into the OTHER language.
 
@@ -307,17 +310,20 @@ ${hintsA ? `\nNotes for ${langA.name}:\n${hintsA}\n` : ""}${hintsB ? `\nNotes fo
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          speaker: { type: Type.STRING, enum: ["A", "B", "none"] },
+          spoken_language: { type: Type.STRING, enum: [nameA, nameB, "none"] },
           transcript: { type: Type.STRING },
           translation: { type: Type.STRING },
         },
-        required: ["speaker", "transcript", "translation"],
+        required: ["spoken_language", "transcript", "translation"],
+        propertyOrdering: ["spoken_language", "transcript", "translation"],
       },
     },
   });
 
   if (response.text) {
-    return { status: 200, body: JSON.parse(response.text) };
+    const r = JSON.parse(response.text);
+    const speaker = r.spoken_language === nameA ? "A" : r.spoken_language === nameB ? "B" : "none";
+    return { status: 200, body: { speaker, transcript: r.transcript, translation: r.translation } };
   }
   return { status: 500, body: { error: "No response" } };
 };
