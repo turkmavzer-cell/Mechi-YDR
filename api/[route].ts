@@ -25,7 +25,7 @@ const getGenAI = () => {
 };
 
 // generateContent sarmalayıcı: hata veya zaman aşımında hemen sıradaki modele geçer
-const generate = async (params: { contents: string; config?: any }) => {
+const generate = async (params: { contents: any; config?: any }) => {
   const ai = getGenAI();
   let lastError: any;
   const started = Date.now();
@@ -274,8 +274,57 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
   return { status: 502, body: { error: lastError?.message || "TTS failed" } };
 };
 
+// Sohbet modu: kısa bir ses parçasını (16 kHz WAV) alır; konuşulan dili iki dil arasından
+// belirler, yazıya döker ve diğer dile çevirir. Tek model çağrısı.
+const converse = async (body: any): Promise<RouteResult> => {
+  const { audio, langA, langB } = body;
+  if (!audio || !langA || !langB) {
+    return { status: 400, body: { error: "audio, langA and langB required" } };
+  }
+  const hintsA = dialectHints(langA.name);
+  const hintsB = dialectHints(langB.name);
+  const prompt = `
+Two people are having a face-to-face conversation through an interpreter.
+Language A: "${langA.name}" (${langA.country || ""})
+Language B: "${langB.name}" (${langB.country || ""})
+
+Listen to the audio clip and:
+1. Decide whether the speaker is speaking language A or language B. If there is no clear human speech (silence, noise, music, coughing), return speaker "none".
+2. Transcribe what was said, in the language spoken.
+3. Translate it into the OTHER language.
+
+Translation rules:
+- If the target is a regional dialect, write it EXACTLY as a native speaker of that dialect would SAY it in everyday conversation, using the dialect's own vocabulary, numbers and colloquial spelling. Never use the standard/formal form (e.g. no Fusha for Arabic dialects).
+- Keep it natural and short, like a real interpreter.
+${hintsA ? `\nNotes for ${langA.name}:\n${hintsA}\n` : ""}${hintsB ? `\nNotes for ${langB.name}:\n${hintsB}\n` : ""}`;
+
+  const response = await generate({
+    contents: [
+      { role: "user", parts: [{ inlineData: { mimeType: "audio/wav", data: audio } }, { text: prompt }] },
+    ] as any,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          speaker: { type: Type.STRING, enum: ["A", "B", "none"] },
+          transcript: { type: Type.STRING },
+          translation: { type: Type.STRING },
+        },
+        required: ["speaker", "transcript", "translation"],
+      },
+    },
+  });
+
+  if (response.text) {
+    return { status: 200, body: JSON.parse(response.text) };
+  }
+  return { status: 500, body: { error: "No response" } };
+};
+
 const ROUTES: Record<string, (body: any) => Promise<RouteResult>> = {
   speak: speakDialect,
+  converse,
   translate,
   "reverse-geocode": reverseGeocode,
   consulate,

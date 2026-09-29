@@ -3,6 +3,8 @@
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { Language } from '../types';
+import { fetchDialectSpeech } from '../services/geminiService';
 
 const isNative = Capacitor.isNativePlatform();
 
@@ -19,7 +21,29 @@ export type ListenSession = {
   stop: () => void;
 };
 
+// Telefonun TTS sesinin doğru okuyamadığı lehçeler: bunlar Gemini'nin aksanlı sesiyle okunur
+const DIALECT_VOICE_IDS = new Set([
+  'ar-EG', 'ar-MA', 'ar-IQ', 'ar-LB', 'ar-SA',
+  'de-DE-BAV', 'de-AT', 'de-CH',
+  'az-AZ-BAK', 'az-IR-TAB', 'fa-AF', 'id-JAV',
+  'en-UK-SCO', 'en-US-TX', 'es-ARG', 'it-NAP', 'jp-KYOT', 'ko-BUS',
+  'ku-KUR', 'ku-SOR', 'ku-ZAZ', 'ru-BY', 'ru-UKR',
+]);
+
+export const usesDialectVoice = (lang: Language) => DIALECT_VOICE_IDS.has(lang.id);
+
+// Aynı cümle tekrar okunursa sunucuya gitmeden çalınır
+const audioCache = new Map<string, string>();
+let currentAudio: HTMLAudioElement | null = null;
+// Her speak çağrısı bir öncekini geçersiz kılar (geç gelen ses çalınmasın)
+let speakToken = 0;
+
 export const stopSpeaking = () => {
+  speakToken++;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
   if (isNative) {
     TextToSpeech.stop().catch(() => {});
   } else if ('speechSynthesis' in window) {
@@ -27,14 +51,24 @@ export const stopSpeaking = () => {
   }
 };
 
-export const speak = async (text: string, langCode: string) => {
-  stopSpeaking();
+const playWav = (base64: string, token: number) =>
+  new Promise<void>((resolve) => {
+    if (token !== speakToken) return resolve();
+    const audio = new Audio(`data:audio/wav;base64,${base64}`);
+    currentAudio = audio;
+    audio.onended = () => resolve();
+    audio.onerror = () => resolve();
+    audio.onpause = () => resolve();
+    audio.play().catch(() => resolve());
+  });
+
+const speakDevice = async (text: string, langCode: string) => {
   if (isNative) {
     try {
       await TextToSpeech.speak({ text, lang: langCode, rate: 1.0, volume: 1.0 });
     } catch (e) {
       console.error('TTS error:', e);
-      // Seçilen lehçe için ses yoksa ana dile düş (ör. ar-EG -> ar)
+      // Seçilen bölge için ses yoksa ana dile düş (ör. ar-EG -> ar)
       const base = langCode.split('-')[0];
       if (base !== langCode) {
         await TextToSpeech.speak({ text, lang: base, rate: 1.0, volume: 1.0 }).catch(() => {});
@@ -46,10 +80,39 @@ export const speak = async (text: string, langCode: string) => {
     alert('Üzgünüz, tarayıcınız sesli okumayı desteklemiyor.');
     return;
   }
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = langCode;
-  utterance.volume = 1;
-  window.speechSynthesis.speak(utterance);
+  await new Promise<void>((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = langCode;
+    utterance.volume = 1;
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
+    window.speechSynthesis.speak(utterance);
+  });
+};
+
+// Metni okur; okuma bitince (veya durdurulunca) tamamlanır
+export const speak = async (text: string, lang: Language) => {
+  stopSpeaking();
+  const token = speakToken;
+  if (usesDialectVoice(lang)) {
+    const key = `${lang.id}|${text}`;
+    let audio = audioCache.get(key) || null;
+    if (!audio) {
+      audio = await fetchDialectSpeech(text, lang);
+      if (audio) {
+        if (audioCache.size > 30) audioCache.delete(audioCache.keys().next().value!);
+        audioCache.set(key, audio);
+      }
+    }
+    if (token !== speakToken) return;
+    if (audio) {
+      await playWav(audio, token);
+      return;
+    }
+    // Gemini sesi alınamazsa telefonun sesiyle oku
+  }
+  if (token !== speakToken) return;
+  await speakDevice(text, lang.speechCode);
 };
 
 const startNative = async (langCode: string): Promise<ListenSession | null> => {
@@ -114,6 +177,15 @@ const startWeb = (langCode: string): ListenSession | null => {
   recognition.start();
 
   return { result, stop: () => recognition.stop() };
+};
+
+// Sohbet modu WebView içinden mikrofon açar; Android izni önceden alınır
+export const ensureMicPermission = async (): Promise<boolean> => {
+  if (!isNative) return true;
+  const perm = await SpeechRecognition.checkPermissions();
+  if (perm.speechRecognition === 'granted') return true;
+  const req = await SpeechRecognition.requestPermissions();
+  return req.speechRecognition === 'granted';
 };
 
 export const startListening = async (langCode: string): Promise<ListenSession | null> => {

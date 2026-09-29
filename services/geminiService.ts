@@ -103,3 +103,45 @@ export const getLanguageFromLocation = async (
         return null;
     }
 };
+
+// Lehçeli seslendirme: WAV sesi base64 olarak döner, hata olursa null
+export const fetchDialectSpeech = async (text: string, lang: Language): Promise<string | null> => {
+    try {
+        const response = await apiFetch("/api/speak", {
+            method: "POST",
+            body: JSON.stringify({ text, languageId: lang.id, languageName: lang.name, country: lang.country })
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data.audio || null;
+    } catch (error) {
+        console.error("Dialect speech error:", error);
+        return null;
+    }
+};
+
+export interface ConverseResult {
+    speaker: 'A' | 'B' | 'none';
+    transcript: string;
+    translation: string;
+}
+
+// Sohbet modu: ses parçasını (16 kHz WAV, base64) gönderir; konuşulan dili bulup diğer dile çevirir
+export const converseAudio = async (
+    audioWavBase64: string,
+    langA: Language,
+    langB: Language
+): Promise<ConverseResult | null> => {
+    try {
+        const pick = (l: Language) => ({ id: l.id, name: l.name, country: l.country });
+        const response = await apiFetch("/api/converse", {
+            method: "POST",
+            body: JSON.stringify({ audio: audioWavBase64, langA: pick(langA), langB: pick(langB) })
+        });
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (error) {
+        console.error("Converse error:", error);
+        return null;
+    }
+};

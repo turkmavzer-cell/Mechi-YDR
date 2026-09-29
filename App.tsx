@@ -4,7 +4,13 @@ import { Language, LANGUAGES, Message } from './types';
 import SettingsModal from './components/SettingsModal';
 import { translateText, getLanguageFromLocation } from './services/geminiService';
 import { LocalizationProvider, useLocalization } from './lib/i18n';
-import { speak, stopSpeaking, startListening as startSpeechSession, ListenSession } from './lib/speech';
+import { speak, stopSpeaking, startListening as startSpeechSession, ListenSession, ensureMicPermission } from './lib/speech';
+import { startConversationCapture, CaptureController, CaptureState } from './lib/conversation';
+import { converseAudio } from './services/geminiService';
+
+// Mesajda dil adı saklanır; seslendirme için dil nesnesini geri bul
+const findLanguageByName = (name: string, fallback: Language) =>
+  LANGUAGES.find(l => l.name === name) || fallback;
 
 const AppContent: React.FC<{
     sourceLang: Language;
@@ -48,9 +54,7 @@ const AppContent: React.FC<{
     scrollToBottom();
   }, [messages]);
 
-  const speakText = (text: string, langCode: string) => {
-    speak(text, langCode);
-  };
+  const speakText = (text: string, lang: Language) => speak(text, lang);
 
   const handleConversationTurn = async (
     textToTranslate: string,
@@ -81,7 +85,7 @@ const AppContent: React.FC<{
       setMessages(prev => [...prev, botMsg]);
       setIsProcessing(false);
   
-      speakText(translatedText, translationTargetLang.speechCode);
+      speakText(translatedText, translationTargetLang);
   };
 
   const handleTextSend = () => {
@@ -122,9 +126,74 @@ const AppContent: React.FC<{
     }
   };
 
+  // --- Sohbet modu: mikrofon sürekli açık, konuşulan dil otomatik bulunur ---
+  type ConvPhase = CaptureState | 'processing' | 'speaking' | 'starting';
+  const [isConversing, setIsConversing] = useState(false);
+  const [convPhase, setConvPhase] = useState<ConvPhase>('starting');
+  const [micLevel, setMicLevel] = useState(0);
+  const captureRef = useRef<CaptureController | null>(null);
+  // Mikrofon geri çağrıları eski state'i görmesin diye güncel diller ref'te tutulur
+  const langsRef = useRef({ sourceLang, targetLang });
+  langsRef.current = { sourceLang, targetLang };
+
+  const handleSegment = async (wav: string) => {
+    const capture = captureRef.current;
+    if (!capture) return;
+    capture.pause();
+    setConvPhase('processing');
+    const { sourceLang: a, targetLang: b } = langsRef.current;
+    const result = await converseAudio(wav, a, b);
+    if (captureRef.current !== capture) return; // bu arada sohbet kapatıldı
+
+    if (result && result.speaker !== 'none' && result.translation?.trim()) {
+      const from = result.speaker === 'A' ? a : b;
+      const to = result.speaker === 'A' ? b : a;
+      const now = Date.now();
+      setMessages(prev => [
+        ...prev,
+        { id: `${now}`, text: result.transcript, sender: 'user', language: from.name, timestamp: now },
+        { id: `${now + 1}`, text: result.translation, sender: 'bot', language: to.name, timestamp: now },
+      ]);
+      setConvPhase('speaking');
+      await speak(result.translation, to);
+    }
+    if (captureRef.current === capture) capture.resume();
+  };
+
+  const stopConversation = () => {
+    captureRef.current?.stop();
+    captureRef.current = null;
+    stopSpeaking();
+    setIsConversing(false);
+    setMicLevel(0);
+  };
+
+  const startConversation = async () => {
+    stopSpeaking();
+    listenSessionRef.current?.stop();
+    if (!(await ensureMicPermission())) {
+      alert('Sohbet modu için mikrofon izni gerekiyor.');
+      return;
+    }
+    setIsConversing(true);
+    setConvPhase('starting');
+    try {
+      captureRef.current = await startConversationCapture({
+        onSegment: (wav) => { handleSegment(wav); },
+        onState: (s) => setConvPhase(prev => (prev === 'processing' || prev === 'speaking') && s === 'paused' ? prev : s),
+        onLevel: setMicLevel,
+      });
+    } catch (e) {
+      console.error('Conversation capture error:', e);
+      alert('Mikrofon açılamadı. Uygulamanın mikrofon izni olduğundan emin olun.');
+      setIsConversing(false);
+    }
+  };
+
   useEffect(() => {
     return () => {
       listenSessionRef.current?.stop();
+      captureRef.current?.stop();
       stopSpeaking();
     }
   }, []);
@@ -215,7 +284,7 @@ const AppContent: React.FC<{
                         </button>
                         {msg.sender === 'bot' && (
                             <button 
-                              onClick={() => speakText(msg.text, targetLang.speechCode)}
+                              onClick={() => speakText(msg.text, findLanguageByName(msg.language, targetLang))}
                               className="p-1 hover:bg-white/20 rounded-full transition-colors"
                               aria-label={t('speakMessage')}
                             >
@@ -242,7 +311,44 @@ const AppContent: React.FC<{
       </main>
 
       <footer className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/90 to-transparent pt-10 safe-bottom px-6">
-        {inputMode === 'text' ? (
+        {isConversing ? (
+            <div className="flex flex-col items-center gap-3 bg-surface/90 backdrop-blur p-4 rounded-2xl border border-gray-600 shadow-2xl animate-slide-up">
+                <div className="flex items-center justify-between w-full text-xs text-gray-300">
+                    <span className="flex items-center gap-1"><span className="text-base">{sourceLang.flag}</span>{sourceLang.name}</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                    <span className="flex items-center gap-1 text-primary">{targetLang.name}<span className="text-base">{targetLang.flag}</span></span>
+                </div>
+
+                {/* Ses seviyesi göstergesi */}
+                <div className="flex items-end justify-center gap-1 h-10">
+                    {[0.5, 0.8, 1, 0.8, 0.5].map((w, i) => (
+                        <div
+                            key={i}
+                            className={`w-2 rounded-full transition-all duration-100 ${convPhase === 'speech' ? 'bg-secondary' : 'bg-primary'}`}
+                            style={{ height: `${Math.max(12, (convPhase === 'listening' || convPhase === 'speech' ? micLevel : 0.15) * w * 100)}%` }}
+                        />
+                    ))}
+                </div>
+
+                <p className="text-sm text-gray-200 font-medium h-5">
+                    {convPhase === 'processing' ? t('convTranslating')
+                        : convPhase === 'speaking' ? t('convSpeaking')
+                        : convPhase === 'speech' ? t('convHearing')
+                        : convPhase === 'starting' ? t('convStarting')
+                        : t('convListening')}
+                </p>
+
+                <button
+                    onClick={stopConversation}
+                    className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white font-semibold px-6 py-2.5 rounded-full active:scale-95 transition"
+                >
+                    <span className="w-3 h-3 bg-white rounded-sm" />
+                    {t('convStop')}
+                </button>
+            </div>
+        ) : inputMode === 'text' ? (
             <div className="flex flex-col gap-2 bg-surface p-3 rounded-2xl border border-gray-600 shadow-2xl animate-slide-up">
                 {/* Language direction selector header */}
                 <div className="flex items-center justify-between border-b border-gray-700/60 pb-2 px-1">
@@ -327,7 +433,7 @@ const AppContent: React.FC<{
             </div>
         ) : (
             <div className="flex justify-around items-center">
-                <div className="flex flex-col items-center gap-2 w-28 text-center">
+                <div className="flex flex-col items-center gap-2 w-24 text-center">
                     <button
                         onClick={() => startListening('source')}
                         className={`h-20 w-20 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-90 ${
@@ -341,17 +447,32 @@ const AppContent: React.FC<{
                     <span className="text-xs font-medium text-gray-300 truncate">{sourceLang.flag} {sourceLang.name}</span>
                 </div>
 
-                <button
-                    onClick={() => setInputMode('text')}
-                    className="h-14 w-14 bg-surface/80 backdrop-blur rounded-full border border-gray-600 flex items-center justify-center active:scale-95 transition"
-                    aria-label={t('write')}
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                </button>
+                <div className="flex items-center gap-2 pb-6">
+                    <button
+                        onClick={() => setInputMode('text')}
+                        className="h-12 w-12 bg-surface/80 backdrop-blur rounded-full border border-gray-600 flex items-center justify-center active:scale-95 transition"
+                        aria-label={t('write')}
+                        title={t('write')}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                    </button>
 
-                <div className="flex flex-col items-center gap-2 w-28 text-center">
+                    {/* Sohbet modu: iki kişi sırayla konuşur, dil otomatik algılanır */}
+                    <button
+                        onClick={startConversation}
+                        className="h-12 w-12 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/30 active:scale-95 transition"
+                        aria-label={t('conversation')}
+                        title={t('conversation')}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
+                        </svg>
+                    </button>
+                </div>
+
+                <div className="flex flex-col items-center gap-2 w-24 text-center">
                     <button
                         onClick={() => startListening('target')}
                         className={`h-20 w-20 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-90 ${
