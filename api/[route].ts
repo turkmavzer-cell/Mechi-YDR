@@ -95,6 +95,7 @@ const translate = async (body: any): Promise<RouteResult> => {
 Translate the following text strictly from "${sourceLang}" to "${targetLang}".
 
 RULES:
+- If the target language name says "Standart"/"Standard" (or names no region/dialect), use the correct STANDARD language only: no dialect words, no slang spelling.
 - If the target is a regional dialect, write it EXACTLY as a native speaker of that dialect would SAY it in everyday street conversation. Do NOT use the standard/formal language (e.g. no Modern Standard Arabic / Fusha when the target is an Arabic dialect, no Hochdeutsch when the target is Bavarian).
 - Use the dialect's own vocabulary, grammar, numbers and colloquial spelling that reflects its pronunciation. The text will be read aloud by a text-to-speech engine, so the spelling must match how it is spoken.
 - If the source is a dialect, interpret its nuances correctly.
@@ -324,6 +325,7 @@ Listen to the audio clip carefully and fill the fields in order:
 4. "translation": translate the chosen transcript into the OTHER language.
 
 Translation rules:
+- If the target language name says "Standart"/"Standard" (or names no region/dialect), use the correct STANDARD language only, no dialect.
 - If the target is a regional dialect, write it EXACTLY as a native speaker of that dialect would SAY it in everyday conversation, using the dialect's own vocabulary, numbers and colloquial spelling. Never use the standard/formal form (e.g. no Fusha for Arabic dialects).
 - Keep it natural and short, like a real interpreter. Never repeat words.
 ${hintsA ? `\nNotes for ${langA.name}:\n${hintsA}\n` : ""}${hintsB ? `\nNotes for ${langB.name}:\n${hintsB}\n` : ""}`;
