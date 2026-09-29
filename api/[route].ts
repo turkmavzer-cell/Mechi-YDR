@@ -2,7 +2,8 @@
 // /api/language-from-location, /api/health. Aynı mantık yerelde server.ts tarafından da kullanılır.
 import { GoogleGenAI, Type } from "@google/genai";
 
-const MODEL = "gemini-3.6-flash";
+// Ana model yoğun (503) veya kota dolu (429) ise sıradaki modele geçilir.
+const MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
 
 type RouteResult = { status: number; body: unknown };
 
@@ -12,6 +13,32 @@ const getGenAI = () => {
     console.warn("GEMINI_API_KEY environment variable is not set.");
   }
   return new GoogleGenAI({ apiKey: apiKey || "" });
+};
+
+const isRetryable = (error: any) => {
+  const text = `${error?.status ?? ""} ${error?.message ?? ""}`;
+  return /\b(503|429|404|500)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|NOT_FOUND|overloaded|high demand/i.test(text);
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// generateContent sarmalayıcı: her model için bir yeniden deneme, sonra yedek modele geçiş
+const generate = async (params: { contents: string; config?: any }) => {
+  const ai = getGenAI();
+  let lastError: any;
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await ai.models.generateContent({ model, ...params });
+      } catch (error: any) {
+        lastError = error;
+        if (!isRetryable(error)) throw error;
+        console.warn(`${model} attempt ${attempt + 1} failed:`, error?.message);
+        if (attempt === 0) await sleep(700);
+      }
+    }
+  }
+  throw lastError;
 };
 
 const translate = async (body: any): Promise<RouteResult> => {
@@ -31,8 +58,7 @@ IMPORTANT:
 Text to translate: "${text}"
 `;
 
-  const response = await getGenAI().models.generateContent({
-    model: MODEL,
+  const response = await generate({
     contents: prompt,
   });
 
@@ -58,8 +84,7 @@ Return a JSON object:
 - "fullAddress": Human-readable localized address (e.g., "Alsancak, Konak, İzmir")
 `;
 
-  const response = await getGenAI().models.generateContent({
-    model: MODEL,
+  const response = await generate({
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -97,8 +122,7 @@ Return a JSON object with the following keys:
 - "title": A title for this information in ${sourceLang.name} (e.g., "Türkiye Cumhuriyeti Berlin Büyükelçiliği").
 If you cannot find specific info, provide the main embassy info in the capital city.`;
 
-  const response = await getGenAI().models.generateContent({
-    model: MODEL,
+  const response = await generate({
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -137,8 +161,7 @@ Your task is to find the single best match from this list for the given coordina
 Return ONLY the 'id' of the best matching language. Do not provide any explanation. If no suitable language is found in the list, return the string "null".
 `;
 
-  const response = await getGenAI().models.generateContent({
-    model: MODEL,
+  const response = await generate({
     contents: prompt,
   });
 
