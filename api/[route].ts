@@ -207,7 +207,75 @@ Return ONLY the 'id' of the best matching language. Do not provide any explanati
   return { status: 200, body: { languageId: null } };
 };
 
+// Lehçeli seslendirme: telefonun TTS sesi lehçe bilmez (ör. Mısır'da ج "g" okunur).
+// Gemini ses modeli metni istenen aksanla okur; ham PCM çıktıyı WAV'a çevirip base64 döndürürüz.
+const TTS_MODELS = ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"];
+
+const ACCENT_NOTES: Record<string, string> = {
+  "ar-EG": "Egyptian Arabic (Cairo accent). Pronounce ج as a hard G (جبنة = gibna), ق as a glottal stop, ث as T or S (تلاتة = talata). Never Fusha pronunciation.",
+  "ar-LB": "Lebanese Arabic (Beirut accent), never Fusha pronunciation.",
+  "ar-MA": "Moroccan Darija (Casablanca accent), never Fusha pronunciation.",
+  "ar-IQ": "Iraqi Arabic (Baghdad accent), never Fusha pronunciation.",
+  "ar-SA": "Saudi Gulf Arabic (Riyadh accent), never Fusha pronunciation.",
+};
+
+const pcmToWavBase64 = (pcmBase64: string, sampleRate = 24000) => {
+  const pcm = Buffer.from(pcmBase64, "base64");
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // fmt chunk size
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // byte rate (16-bit mono)
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]).toString("base64");
+};
+
+const speakDialect = async (body: any): Promise<RouteResult> => {
+  const { text, languageId, languageName } = body;
+  if (!text) {
+    return { status: 400, body: { error: "Text is required" } };
+  }
+  const accent = ACCENT_NOTES[languageId] || `${languageName}, with an authentic native local accent (not the standard/formal pronunciation)`;
+  const contents = `Read the following text aloud exactly as written, naturally and clearly, as a native speaker of ${accent}\n\n${text}`;
+
+  const ai = getGenAI();
+  const started = Date.now();
+  let lastError: any;
+  for (const model of TTS_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
+          httpOptions: { timeout: 15000 },
+        } as any,
+      });
+      const part = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data);
+      const data = part?.inlineData?.data;
+      if (!data) throw new Error("No audio in response");
+      const rate = Number(/rate=(\d+)/.exec(part?.inlineData?.mimeType || "")?.[1]) || 24000;
+      lastServed = `${model};total=${Date.now() - started}ms`;
+      return { status: 200, body: { audio: pcmToWavBase64(data, rate), mimeType: "audio/wav" } };
+    } catch (error: any) {
+      lastError = error;
+      console.warn(`${model} TTS failed:`, String(error?.message).slice(0, 200));
+    }
+  }
+  return { status: 502, body: { error: lastError?.message || "TTS failed" } };
+};
+
 const ROUTES: Record<string, (body: any) => Promise<RouteResult>> = {
+  speak: speakDialect,
   translate,
   "reverse-geocode": reverseGeocode,
   consulate,
