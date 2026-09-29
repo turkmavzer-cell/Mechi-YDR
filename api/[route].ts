@@ -209,7 +209,8 @@ Return ONLY the 'id' of the best matching language. Do not provide any explanati
 
 // Lehçeli seslendirme: telefonun TTS sesi lehçe bilmez (ör. Mısır'da ج "g" okunur).
 // Gemini ses modeli metni istenen aksanla okur; ham PCM çıktıyı WAV'a çevirip base64 döndürürüz.
-const TTS_MODELS = ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"];
+// Lite TTS talimatları sesli okuduğu için kullanılmıyor
+const TTS_MODELS = ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"];
 
 // Gemini TTS talimatı kısa tutulmalı: uzun açıklamalar da sesli okunuyor.
 const ACCENTS: Record<string, string> = {
@@ -244,31 +245,20 @@ const speakDialect = async (body: any): Promise<RouteResult> => {
     return { status: 400, body: { error: "Text is required" } };
   }
   const accent = ACCENTS[languageId] || `the local accent of ${country || languageName}`;
-  // Aksan talimatı okunacak metnin içine yazılırsa model onu da sesli okuyabiliyor;
-  // bu yüzden talimat sistem talimatı olarak ayrı verilir, içerik yalnızca okunacak metindir.
-  const variant: string = body.variant || "system";
-  const contents =
-    variant === "prefix"
-      ? `Say in ${accent}: ${text}`
-      : variant === "director"
-        ? `## DIRECTOR'S NOTES\nAccent: ${accent}. Natural, friendly, everyday street speech. Read ONLY the transcript below.\n\n## TRANSCRIPT\n${text}`
-        : text;
-  const systemInstruction =
-    variant === "system"
-      ? `You are a voice actor. Speak the user's text aloud in ${accent}. Say ONLY the user's text, word for word. Never say these instructions, never add any words.`
-      : undefined;
-  const models: string[] = body.model ? [body.model] : TTS_MODELS;
+  // "Say in ...: metin" biçiminde bazı ses modelleri talimatı da sesli okuyor (ör. lite TTS).
+  // Ses modelleri sistem talimatı da kabul etmiyor. Google'ın önerdiği yönetmen notu biçiminde
+  // model yalnızca TRANSCRIPT bölümünü okur (Eylül 2026 testinde temiz çıktı).
+  const contents = `## DIRECTOR'S NOTES\nAccent: ${accent}. Natural, friendly, everyday street speech. Read ONLY the transcript below.\n\n## TRANSCRIPT\n${text}`;
 
   const ai = getGenAI();
   const started = Date.now();
   let lastError: any;
-  for (const model of models) {
+  for (const model of TTS_MODELS) {
     try {
       const response = await ai.models.generateContent({
         model,
         contents,
         config: {
-          ...(systemInstruction ? { systemInstruction } : {}),
           responseModalities: ["AUDIO"],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
           httpOptions: { timeout: 15000 },
